@@ -74,7 +74,7 @@ local function refresh_overlays()
   end
 
   render_mod.render(state.sidebar_buf, elsewhere_l, in_tree_l, terminals_l)
-  navigation_mod.apply_labels(state.sidebar_buf, nav_by_label)
+  navigation_mod.apply_labels(nav_by_label)
 end
 
 local function on_netrw_filetype(bufnr)

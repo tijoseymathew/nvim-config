@@ -45,7 +45,10 @@ function M.parse_tree(bufnr, curdir)
   local entries = {}
 
   for lnum, line in ipairs(lines) do
-    if line:match("%S") then
+    -- Skip blank lines, netrw's banner/comment lines (g:netrw_banner),
+    -- and the "../" parent-directory entry -- none of those are real
+    -- files we'd ever need to match an open buffer against.
+    if line:match("%S") and not line:match('^%s*"') and not line:match("^%.%./?$") then
       local indent = #(line:match("^(%s*)"))
       local rest = line:sub(indent + 1)
       local is_dir = false

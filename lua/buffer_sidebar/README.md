@@ -78,6 +78,15 @@ churn (`BufAdd`, `BufDelete`, `TermOpen`, `TermClose`, `DirChanged`,
 
 ## Known limitations
 
+- **`g<label>` mappings are global**, not scoped to the sidebar buffer,
+  since the point is a two-keystroke jump from wherever you're currently
+  editing. They're fully torn down and reinstalled every relabel, so a
+  letter is only ever shadowed while it's actively pointing at an open
+  buffer/terminal -- but a currently-assigned label does take priority
+  over whatever `g<letter>` normally does (e.g. `gj`/`gk`/`gh`/`g;` are
+  real motions). Pass a `labels` list without those letters in `setup()`
+  if you'd rather avoid the overlap entirely.
+
 - **Tree-line matching is a display heuristic.** `netrw.parse_tree`
   reconstructs paths from netrw's on-screen indentation/glyphs to figure
   out which listing line corresponds to which open buffer. It matches
