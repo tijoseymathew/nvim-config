@@ -1,7 +1,18 @@
 -- lua/buffer_sidebar/navigation.lua
 --
--- Two-keystroke navigation (g<label>) and "jump to the existing buffer
--- instead of duplicating it" behaviour for <CR> inside the sidebar.
+-- Two-keystroke navigation (g<label>) and the Terminals window's <CR>.
+--
+-- Opening files from inside Explore is NOT handled here: init.lua sets
+-- b:netrw_browse_split = 4 on the sidebar buffer, which tells netrw's
+-- own <CR> to open the selected file in the previously-focused window
+-- rather than in place -- the same thing netrw's own `P` mapping does.
+-- That means no custom <CR> override, no replaying of netrw's captured
+-- default mapping, and no reimplementing netrw's own path resolution:
+-- letting netrw resolve its own paths is what makes this correct for
+-- nested/tree-mode entries by construction, rather than something we
+-- have to get right ourselves. And opening a path Vim already has a
+-- buffer for never creates a second buffer, so "don't duplicate an
+-- already-open buffer" falls out for free.
 --
 -- Only the labels currently in use get a g<label> mapping, and they're
 -- torn down and reinstalled on every relabel -- so this never claims a
@@ -18,6 +29,22 @@ function M.set_main_win_getter(fn)
   main_win_getter = fn
 end
 
+--- Resolve the window that "jump to this buffer" should land in: prefer
+-- the remembered "main" window, else any currently non-netrw window.
+-- Used by g<label> and the Terminals <CR>.
+local function resolve_main_window()
+  local target = main_win_getter and main_win_getter()
+  if target and vim.api.nvim_win_is_valid(target) then
+    return target
+  end
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.bo[vim.api.nvim_win_get_buf(winid)].filetype ~= "netrw" then
+      return winid
+    end
+  end
+  return nil
+end
+
 --- Show `bufnr` in the "main" editing window (not the sidebar), reusing
 -- a window that already displays it if one exists.
 function M.jump_to_buffer(bufnr)
@@ -30,16 +57,7 @@ function M.jump_to_buffer(bufnr)
     end
   end
 
-  local target = main_win_getter and main_win_getter()
-  if not (target and vim.api.nvim_win_is_valid(target)) then
-    target = nil
-    for _, winid in ipairs(vim.api.nvim_list_wins()) do
-      if vim.bo[vim.api.nvim_win_get_buf(winid)].filetype ~= "netrw" then
-        target = winid
-        break
-      end
-    end
-  end
+  local target = resolve_main_window()
   if not target then return end
 
   vim.api.nvim_set_current_win(target)
@@ -72,68 +90,35 @@ function M.apply_labels(by_label)
   end
 end
 
---- Resolve the window that opened files/buffers should land in: prefer
--- the remembered "main" window, else any currently non-netrw window.
-local function resolve_main_window()
-  local target = main_win_getter and main_win_getter()
-  if target and vim.api.nvim_win_is_valid(target) then
-    return target
-  end
-  for _, winid in ipairs(vim.api.nvim_list_wins()) do
-    if vim.bo[vim.api.nvim_win_get_buf(winid)].filetype ~= "netrw" then
-      return winid
-    end
-  end
-  return nil
+-- Per-buffer line -> terminal bufnr map, refreshed alongside the
+-- Terminals window's content (see render.render_terminals). Kept here
+-- rather than as a buffer-local var since vim.b can't cleanly round-trip
+-- a sparse Lua table (non-contiguous integer keys).
+local terminal_line_maps = {}
+
+function M.set_terminal_line_map(term_bufnr, line_map)
+  terminal_line_maps[term_bufnr] = line_map
 end
 
---- Open a filesystem path (no buffer for it yet) in the main window.
-function M.open_path_in_main(path)
-  local target = resolve_main_window()
-  if not target then return end
-  vim.api.nvim_set_current_win(target)
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
-end
-
---- Install the "open in the main window, reusing an existing buffer
--- instead of duplicating it" <CR> override. Falls back to netrw's own
--- default <CR> only for directories, whose normal expand/descend-in-
--- place behaviour inside the sidebar is left untouched.
-function M.install_smart_cr(sidebar_bufnr)
-  local netrw = require("buffer_sidebar.netrw")
-  local default_cr = netrw.capture_default_cr(sidebar_bufnr)
+--- Install <CR> in the Terminals window: jump to the terminal buffer
+-- listed on the current line, if any. Idempotent -- only needs to be
+-- set up once, since (unlike netrw) nothing else touches this buffer's
+-- mappings.
+function M.install_terminal_cr(term_bufnr)
+  if vim.b[term_bufnr].buffer_sidebar_term_cr_installed then return end
+  vim.b[term_bufnr].buffer_sidebar_term_cr_installed = true
 
   vim.keymap.set("n", "<CR>", function()
-    local word = netrw.cursor_word()
-    local curdir = netrw.curdir(sidebar_bufnr)
-
-    if not (word and curdir) then
-      return netrw.run_default_cr(default_cr)
-    end
-
-    local is_dir = word:sub(-1) == "/"
-    local clean = (word:gsub("/$", ""))
-    -- Resolve against netrw's OWN listing directory, not Neovim's
-    -- process cwd -- those two are frequently different, which is why
-    -- the existing-buffer lookup below needs this to be right.
-    local full = word:match("^/")
-      and vim.fn.fnamemodify(word, ":p")
-      or (curdir:gsub("/$", "") .. "/" .. clean)
-
-    if is_dir or vim.fn.isdirectory(full) == 1 then
-      return netrw.run_default_cr(default_cr)
-    end
-
-    local existing = vim.fn.bufnr(full)
-    if existing ~= -1 and vim.api.nvim_buf_is_loaded(existing) then
-      M.jump_to_buffer(existing)
-    else
-      M.open_path_in_main(full)
+    local lnum = vim.api.nvim_win_get_cursor(0)[1]
+    local line_map = terminal_line_maps[term_bufnr]
+    local bufnr = line_map and line_map[lnum]
+    if bufnr then
+      M.jump_to_buffer(bufnr)
     end
   end, {
-    buffer = sidebar_bufnr,
+    buffer = term_bufnr,
     silent = true,
-    desc = "buffer_sidebar: open in main window (reuse existing buffer if any)",
+    desc = "buffer_sidebar: open terminal under cursor",
   })
 end
 

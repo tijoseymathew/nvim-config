@@ -1,33 +1,19 @@
 -- lua/buffer_sidebar/render.lua
 --
--- All visual overlay logic lives here. Netrw's own buffer text is never
--- modified -- everything below is virtual text/lines and signs layered
--- on top, so netrw's line-based bookkeeping (bookmarks, history, gx,
--- marks) stays intact.
+-- Two independent rendering targets:
+--   render()           -- in-tree file labels, as signs on netrw's own
+--                          buffer. Netrw's buffer text is never modified.
+--   render_terminals() -- the dedicated Terminals buffer's content. This
+--                          buffer is entirely ours (a plain scratch
+--                          buffer, not netrw), so it's built from real
+--                          lines rather than virtual overlays -- which
+--                          is what lets it live in its own pinned
+--                          window, independent of netrw's scrolling.
 
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("buffer_sidebar")
 local SIGN_GROUP = "buffer_sidebar_labels"
-
-local function header_line(text)
-  return {
-    { text, "Title" },
-  }
-end
-
-local function rule_line()
-  return {
-    { string.rep("─", 15), "Comment" },
-  }
-end
-
-local function entry_line(label, display)
-  return {
-    { label .. "  ", "Function" },
-    { display, "Normal" },
-  }
-end
 
 local defined_signs = {}
 local function define_sign(label)
@@ -39,36 +25,19 @@ local function define_sign(label)
   return name
 end
 
---- Render the full overlay onto the sidebar's netrw buffer.
--- @param bufnr       sidebar netrw buffer
--- @param elsewhere   list of { label, item = { bufnr, display } }
--- @param in_tree     list of { label, item = { bufnr, entry } }
--- @param terminals   list of { label, item = { bufnr, display } }
-function M.render(bufnr, elsewhere, in_tree, terminals)
+--- Render in-tree file labels as signs on netrw's own buffer. Signs sit
+-- in a fixed gutter and never touch the line's real text, so they're
+-- indifferent to netrw's listing style (flat vs tree, ASCII vs Unicode
+-- guides) -- the label lines up the same way regardless. Visibility is
+-- guaranteed by forcing 'signcolumn' on for the sidebar window (see
+-- init.lua) rather than relying on the user's global setting.
+-- @param bufnr    sidebar netrw buffer
+-- @param in_tree  list of { label, item = { bufnr, entry } }
+function M.render(bufnr, in_tree)
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
-  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
   vim.fn.sign_unplace(SIGN_GROUP, { buffer = bufnr })
 
-  -- "Open Elsewhere": virtual lines above netrw's first line.
-  if #elsewhere > 0 then
-    local virt_lines = { header_line("Open Elsewhere"), rule_line() }
-    for _, labelled in ipairs(elsewhere) do
-      virt_lines[#virt_lines + 1] = entry_line(labelled.label, labelled.item.display)
-    end
-    vim.api.nvim_buf_set_extmark(bufnr, ns, 0, 0, {
-      virt_lines = virt_lines,
-      virt_lines_above = true,
-    })
-  end
-
-  -- In-tree labels: a sign-column marker next to netrw's own line for
-  -- that file. Signs sit in a fixed gutter and never touch the line's
-  -- real text, so they're indifferent to netrw's listing style (flat
-  -- vs tree, ASCII vs Unicode guides) -- the label always lines up the
-  -- same way regardless. Visibility is guaranteed by forcing
-  -- 'signcolumn' on for the sidebar window (see init.lua) rather than
-  -- relying on the user's global setting.
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   for _, labelled in ipairs(in_tree) do
     local lnum = labelled.item.entry.lnum
@@ -80,19 +49,48 @@ function M.render(bufnr, elsewhere, in_tree, terminals)
       })
     end
   end
+end
 
-  -- "Terminals": virtual lines below netrw's last line.
-  local last = vim.api.nvim_buf_line_count(bufnr)
-  if #terminals > 0 and last > 0 then
-    local virt_lines = { header_line("Terminals"), rule_line() }
+--- Rebuild the Terminals window's buffer content as plain text lines:
+--   Terminals
+--   ─────────
+--   j  dev-server
+--   k  python
+--
+-- Returns a line-number -> bufnr map (for <CR> in that window; see
+-- navigation.install_terminal_cr).
+-- @param bufnr      the dedicated Terminals scratch buffer
+-- @param terminals  list of { label, item = { bufnr, display } }
+function M.render_terminals(bufnr, terminals)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return {} end
+
+  local lines = { "Terminals", string.rep("─", 15) }
+  local label_lens = {} -- lnum -> length of the "label  " prefix, for highlight
+  local line_map = {}
+
+  if #terminals == 0 then
+    lines[#lines + 1] = "(none)"
+  else
     for _, labelled in ipairs(terminals) do
-      virt_lines[#virt_lines + 1] = entry_line(labelled.label, labelled.item.display)
+      local prefix = labelled.label .. "  "
+      lines[#lines + 1] = prefix .. labelled.item.display
+      label_lens[#lines] = #prefix
+      line_map[#lines] = labelled.item.bufnr
     end
-    vim.api.nvim_buf_set_extmark(bufnr, ns, last - 1, 0, {
-      virt_lines = virt_lines,
-      virt_lines_above = false,
-    })
   end
+
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  vim.api.nvim_buf_add_highlight(bufnr, ns, "Title", 0, 0, -1)
+  vim.api.nvim_buf_add_highlight(bufnr, ns, "Comment", 1, 0, -1)
+  for lnum, len in pairs(label_lens) do
+    vim.api.nvim_buf_add_highlight(bufnr, ns, "Function", lnum - 1, 0, len)
+  end
+
+  return line_map
 end
 
 return M

@@ -33,11 +33,13 @@ end
 --   { lnum, indent, name, is_dir, fullpath }
 --
 -- This mirrors netrw's own tree-mode rendering purely so we can match
--- currently-open buffers against the lines netrw already drew. It is a
+-- currently-open buffers against the lines netrw already drew, and so
+-- <CR> in netrw can defer to netrw's own file-opening (see
+-- b:netrw_browse_split in init.lua) without us needing this for path
+-- resolution at all -- it's used only for label matching now. It is a
 -- display-matching heuristic, not a second filesystem model: entries
 -- that aren't currently visible (e.g. inside a collapsed directory)
--- simply won't match, and those buffers fall back to the "Open
--- Elsewhere" section, which is the documented behaviour.
+-- simply won't match, and those buffers just won't have a label.
 --
 -- Two things netrw's tree mode does that this has to account for:
 --   1. It draws guide characters for nesting, not just spaces -- in
@@ -119,42 +121,6 @@ function M.parse_tree(bufnr, curdir)
   end
 
   return entries
-end
-
---- Best-effort "word under cursor" in a netrw listing line -- i.e. the
--- filename netrw itself would act on for <CR>/gx.
-function M.cursor_word()
-  local ok, word = pcall(vim.fn.expand, "<cfile>")
-  if ok and word and word ~= "" then
-    return word
-  end
-  return nil
-end
-
---- Capture netrw's own buffer-local normal-mode <CR> mapping so we can
--- defer to it for anything we don't special-case (directories, files
--- that aren't already open anywhere). Best-effort: netrw's mapping
--- internals aren't a documented public API and can vary across Neovim
--- versions, but capturing-and-replaying the existing mapping (rather
--- than reimplementing NetrwBrowseX) keeps us from duplicating netrw's
--- own open logic.
-function M.capture_default_cr(bufnr)
-  local map = vim.fn.maparg("<CR>", "n", false, true)
-  if map and map.buffer == 1 then
-    return map
-  end
-  return nil
-end
-
---- Replay a previously-captured default <CR> mapping.
-function M.run_default_cr(map)
-  if not map then return end
-  if map.callback then
-    map.callback()
-  elseif map.rhs and map.rhs ~= "" then
-    local keys = vim.api.nvim_replace_termcodes(map.rhs, true, false, true)
-    vim.api.nvim_feedkeys(keys, "n", false)
-  end
 end
 
 return M

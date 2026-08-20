@@ -46,11 +46,13 @@ local function norm(path)
   return (full:gsub("/$", ""))
 end
 
---- Classify buffers into three groups relative to what netrw is
--- currently showing (`tree_entries`, from netrw.parse_tree):
---   in_tree    { bufnr, entry }        -- entry is the matching tree line
---   elsewhere  { bufnr, display }      -- display is a relative path
+--- Classify buffers relative to what netrw is currently showing
+-- (`tree_entries`, from netrw.parse_tree):
+--   in_tree    { bufnr, entry }   -- entry is the matching tree line
 --   terminals  { bufnr, display }
+--
+-- Buffers that aren't part of the current Explore tree are simply not
+-- labelled or shown -- there's no "Open Elsewhere" section.
 function M.classify(bufnrs, tree_entries)
   local by_path = {}
   for _, e in ipairs(tree_entries) do
@@ -59,7 +61,7 @@ function M.classify(bufnrs, tree_entries)
     end
   end
 
-  local in_tree, elsewhere, terminals = {}, {}, {}
+  local in_tree, terminals = {}, {}
 
   for _, bufnr in ipairs(bufnrs) do
     if is_terminal(bufnr) then
@@ -71,16 +73,12 @@ function M.classify(bufnrs, tree_entries)
         local entry = p and by_path[p]
         if entry then
           in_tree[#in_tree + 1] = { bufnr = bufnr, entry = entry }
-        else
-          -- Relative to cwd where possible, else ~-relative, else full path.
-          local rel = vim.fn.fnamemodify(name, ":~:.")
-          elsewhere[#elsewhere + 1] = { bufnr = bufnr, display = rel }
         end
       end
     end
   end
 
-  return in_tree, elsewhere, terminals
+  return in_tree, terminals
 end
 
 return M
