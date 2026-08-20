@@ -8,6 +8,7 @@
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("buffer_sidebar")
+local SIGN_GROUP = "buffer_sidebar_labels"
 
 local function header_line(text)
   return {
@@ -28,6 +29,16 @@ local function entry_line(label, display)
   }
 end
 
+local defined_signs = {}
+local function define_sign(label)
+  local name = "BufSidebar_" .. label
+  if not defined_signs[label] then
+    vim.fn.sign_define(name, { text = label .. " ", texthl = "Function" })
+    defined_signs[label] = true
+  end
+  return name
+end
+
 --- Render the full overlay onto the sidebar's netrw buffer.
 -- @param bufnr       sidebar netrw buffer
 -- @param elsewhere   list of { label, item = { bufnr, display } }
@@ -37,6 +48,7 @@ function M.render(bufnr, elsewhere, in_tree, terminals)
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  vim.fn.sign_unplace(SIGN_GROUP, { buffer = bufnr })
 
   -- "Open Elsewhere": virtual lines above netrw's first line.
   if #elsewhere > 0 then
@@ -50,18 +62,21 @@ function M.render(bufnr, elsewhere, in_tree, terminals)
     })
   end
 
-  -- In-tree labels: inline virtual text inserted right before netrw's
-  -- own line for that file. This *pushes* the real text right rather
-  -- than covering it (unlike an "overlay"), and unlike a sign-column
-  -- marker it renders unconditionally -- it doesn't depend on
-  -- 'signcolumn' being visible for the netrw buffer/window.
+  -- In-tree labels: a sign-column marker next to netrw's own line for
+  -- that file. Signs sit in a fixed gutter and never touch the line's
+  -- real text, so they're indifferent to netrw's listing style (flat
+  -- vs tree, ASCII vs Unicode guides) -- the label always lines up the
+  -- same way regardless. Visibility is guaranteed by forcing
+  -- 'signcolumn' on for the sidebar window (see init.lua) rather than
+  -- relying on the user's global setting.
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   for _, labelled in ipairs(in_tree) do
     local lnum = labelled.item.entry.lnum
     if lnum >= 1 and lnum <= line_count then
-      vim.api.nvim_buf_set_extmark(bufnr, ns, lnum - 1, 0, {
-        virt_text = { { labelled.label .. " ", "Function" } },
-        virt_text_pos = "inline",
+      local sign = define_sign(labelled.label)
+      vim.fn.sign_place(0, SIGN_GROUP, sign, bufnr, {
+        lnum = lnum,
+        priority = 20,
       })
     end
   end

@@ -88,6 +88,11 @@ local function on_netrw_filetype(bufnr)
   vim.b[bufnr].buffer_sidebar = true
   state.curdir = netrw_mod.curdir(bufnr) or state.curdir
 
+  -- Force the sign gutter on for this window specifically, so in-tree
+  -- file labels are visible regardless of the user's global/filetype
+  -- 'signcolumn' setting (netrw or an ftplugin may otherwise turn it off).
+  vim.wo[state.sidebar_win].signcolumn = "yes"
+
   navigation_mod.install_smart_cr(bufnr)
   refresh_overlays()
 end
