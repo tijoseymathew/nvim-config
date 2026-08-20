@@ -32,25 +32,45 @@ end
 --- Parse the on-screen netrw tree listing into a flat list of entries:
 --   { lnum, indent, name, is_dir, fullpath }
 --
--- This mirrors netrw's own tree-mode indentation (2 spaces per depth,
--- "▾"/"▸" glyphs on expanded/collapsed directories) purely so we can
--- match currently-open buffers against the lines netrw already drew.
--- It is a display-matching heuristic, not a second filesystem model:
--- entries that aren't currently visible (e.g. inside a collapsed
--- directory) simply won't match, and those buffers fall back to the
--- "Open Elsewhere" section, which is the documented behaviour.
+-- This mirrors netrw's own tree-mode rendering purely so we can match
+-- currently-open buffers against the lines netrw already drew. It is a
+-- display-matching heuristic, not a second filesystem model: entries
+-- that aren't currently visible (e.g. inside a collapsed directory)
+-- simply won't match, and those buffers fall back to the "Open
+-- Elsewhere" section, which is the documented behaviour.
+--
+-- Two things netrw's tree mode does that this has to account for:
+--   1. It draws guide characters for nesting, not just spaces -- in
+--      environments without the Unicode glyphs available it falls back
+--      to ASCII, e.g. "|  " per depth level instead of "▾ "/two spaces.
+--      Depth is therefore measured by the length of the stripped guide
+--      prefix, not by counting literal whitespace.
+--   2. The very first real entry (right after "../") is a directory
+--      node representing the currently-listed directory ITSELF, not a
+--      child of it -- its own name matches curdir's basename. Treating
+--      it like a normal child would double up every path underneath
+--      it (".../nvim-screen/nvim-screen/LICENSE" instead of
+--      ".../nvim-screen/LICENSE").
 function M.parse_tree(bufnr, curdir)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local stack = {}
   local entries = {}
+  local root_basename = curdir and vim.fn.fnamemodify((curdir:gsub("/$", "")), ":t") or nil
+  local seen_root = false
 
   for lnum, line in ipairs(lines) do
     -- Skip blank lines, netrw's banner/comment lines (g:netrw_banner),
     -- and the "../" parent-directory entry -- none of those are real
     -- files we'd ever need to match an open buffer against.
     if line:match("%S") and not line:match('^%s*"') and not line:match("^%.%./?$") then
-      local indent = #(line:match("^(%s*)"))
-      local rest = line:sub(indent + 1)
+      -- Strip the tree-guide prefix: any run of whitespace and/or "|"
+      -- guide characters. Its *length* (not a level count) is used as
+      -- a monotonic depth key for the stack below -- deeper nesting
+      -- always produces a longer prefix than shallower nesting, which
+      -- is all the push/pop logic actually needs.
+      local guide, rest = line:match("^([%s|]*)(.*)$")
+      local depth_key = #guide
+
       local is_dir = false
       local name = rest
 
@@ -58,27 +78,42 @@ function M.parse_tree(bufnr, curdir)
       if glyph == "\226\150\190" or glyph == "\226\150\184" then
         is_dir = true
         name = rest:sub(5) -- glyph + following space
-      elseif rest:sub(-1) == "/" then
-        is_dir = true
       end
-      name = name:gsub("/$", "")
 
-      while #stack > 0 and stack[#stack].indent >= indent do
-        table.remove(stack)
+      -- netrw's trailing decorations: "/" for directories, and
+      -- ls -F-style "*"/"@"/"=" for executable/symlink/socket files.
+      local last = name:sub(-1)
+      if last == "/" then
+        is_dir = true
+        name = name:sub(1, -2)
+      elseif last == "*" or last == "@" or last == "=" then
+        name = name:sub(1, -2)
       end
-      local parent = stack[#stack]
-      local base = parent and parent.fullpath or curdir
-      local fullpath = (base and (base:gsub("/$", "")) or "") .. "/" .. name
+
+      local fullpath, is_root_wrapper
+      if not seen_root and is_dir and depth_key == 0 and root_basename and name == root_basename then
+        -- This line represents curdir itself, not a child of it.
+        fullpath = curdir
+        is_root_wrapper = true
+      else
+        while #stack > 0 and stack[#stack].depth_key >= depth_key do
+          table.remove(stack)
+        end
+        local parent = stack[#stack]
+        local base = parent and parent.fullpath or curdir
+        fullpath = (base and (base:gsub("/$", "")) or "") .. "/" .. name
+      end
+      seen_root = true
 
       entries[#entries + 1] = {
         lnum = lnum,
-        indent = indent,
+        indent = depth_key,
         name = name,
         is_dir = is_dir,
         fullpath = fullpath,
       }
       if is_dir then
-        stack[#stack + 1] = { indent = indent, fullpath = fullpath }
+        stack[#stack + 1] = { depth_key = depth_key, fullpath = fullpath }
       end
     end
   end
