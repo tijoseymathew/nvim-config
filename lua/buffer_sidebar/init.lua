@@ -53,6 +53,38 @@ local function is_sidebar_open()
   return state.sidebar_win ~= nil and vim.api.nvim_win_is_valid(state.sidebar_win)
 end
 
+-- Netrw's `netrw_browse_split = 4` opens files in Vim's own "alternate
+-- window" (:help CTRL-W_p) -- whatever window was current immediately
+-- before the one you're in now. That's naturally the main window in the
+-- common main <-> Explore flow, but if you focus the Terminals window
+-- and then jump straight into Explore (skipping the main window), the
+-- alternate window becomes Terminals, and netrw would try to open the
+-- next file there. Guarded against below by fixing the alternate window
+-- back to the main window, but ONLY when it's actually the Terminals
+-- window -- any other legitimate alternate window (e.g. a third split
+-- you're using) is left alone.
+local fixing_alternate = false
+local function guard_alternate_window()
+  if fixing_alternate then return end
+  if not (state.terminal_win and vim.api.nvim_win_is_valid(state.terminal_win)) then return end
+  if not (state.main_win and vim.api.nvim_win_is_valid(state.main_win)) then return end
+
+  local cur = vim.api.nvim_get_current_win()
+  if cur ~= state.sidebar_win then return end
+
+  local alt_winnr = vim.fn.winnr("#")
+  if alt_winnr == 0 then return end
+  if vim.fn.win_getid(alt_winnr) ~= state.terminal_win then return end
+
+  -- Visiting the main window and coming straight back resets Vim's
+  -- alternate-window pointer to the main window, without changing which
+  -- window is actually focused (still `cur` when this returns).
+  fixing_alternate = true
+  vim.api.nvim_set_current_win(state.main_win)
+  vim.api.nvim_set_current_win(cur)
+  fixing_alternate = false
+end
+
 --- Recompute buffer classification, labels, and the two rendering
 -- targets (netrw's sign-based file labels, the Terminals buffer's
 -- content). Does NOT touch netrw's own listing.
@@ -108,13 +140,6 @@ local function on_netrw_filetype(bufnr)
   vim.b[bufnr].buffer_sidebar = true
   state.curdir = netrw_mod.curdir(bufnr) or state.curdir
 
-  -- Let netrw open selected files itself, in the previously-focused
-  -- window, instead of in place in the sidebar -- this is netrw's own
-  -- "P"-style behaviour (see :help netrw-browse-split), set buffer-
-  -- local so it only affects this sidebar buffer. Cheap to reassign on
-  -- every relist.
-  vim.b[bufnr].netrw_browse_split = 4
-
   refresh_overlays()
 end
 
@@ -149,6 +174,19 @@ local function open_sidebar()
     vim.g.netrw_liststyle = 3
   end
 
+  -- Let netrw open selected files itself, in the previously-focused
+  -- window, instead of in place in the sidebar -- this is netrw's own
+  -- "P"-style behaviour (see :help netrw-browse-split). This has to be
+  -- the GLOBAL setting, not a buffer-local override: netrw reads
+  -- g:netrw_browse_split into its own internal state during :Explore's
+  -- own init, which runs before FileType netrw fires -- by the time our
+  -- FileType autocmd could set a buffer-local value, netrw's already
+  -- committed to whatever the global said. Only set if the user hasn't
+  -- configured their own value, same as tree_style above.
+  if vim.g.netrw_browse_split == nil then
+    vim.g.netrw_browse_split = 4
+  end
+
   -- Outer vertical split becomes the netrw window.
   vim.cmd(("botright vertical %d split"):format(config.width))
   state.sidebar_win = vim.api.nvim_get_current_win()
@@ -173,6 +211,7 @@ local function open_sidebar()
   navigation_mod.install_terminal_cr(state.terminal_buf)
 
   netrw_mod.explore_in_win(state.sidebar_win, state.curdir or vim.fn.getcwd())
+  guard_alternate_window()
   -- The FileType netrw autocmd (on_netrw_filetype) takes it from here.
 end
 
@@ -208,6 +247,12 @@ function M.setup(opts)
   autocmds_mod.setup({
     on_netrw_filetype = on_netrw_filetype,
     on_state_changed = refresh_overlays,
+  })
+
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = vim.api.nvim_create_augroup("BufferSidebarAltWin", { clear = true }),
+    callback = guard_alternate_window,
+    desc = "buffer_sidebar: keep the Terminals window from becoming netrw's browse-split target",
   })
 
   vim.api.nvim_create_user_command("BufferSidebar", function(cmd_opts)

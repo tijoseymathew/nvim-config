@@ -35,13 +35,12 @@ vim.keymap.set("n", "<leader>e", "<cmd>BufferSidebar<CR>")
   bottom.
 - In the Explore window: normal netrw navigation works as usual. Files
   that already have an open buffer show a label in the sign column.
-  `<CR>` opens the selected file in whatever window you were in before
-  you focused the sidebar (netrw's own `b:netrw_browse_split = 4`
-  behaviour, the same thing its `P` mapping does) rather than in place
-  in the sidebar -- and since opening a path that's already got a
-  buffer never creates a second buffer, this also means you land on the
-  existing buffer instead of a duplicate, for free. `<CR>` on a
-  directory is untouched netrw behaviour.
+  `<CR>` opens the selected file in the main window (netrw's own
+  `g:netrw_browse_split = 4` behaviour, the same thing its `P` mapping
+  does) rather than in place in the sidebar -- and since opening a path
+  that's already got a buffer never creates a second buffer, this also
+  means you land on the existing buffer instead of a duplicate, for
+  free. `<CR>` on a directory is untouched netrw behaviour.
 - In the Terminals window: `<CR>` on a line jumps to that terminal.
 - From **anywhere**: `g<label>` (e.g. `ga`, `gs`) jumps directly to the
   file or terminal currently shown with that label. Labels are
@@ -68,13 +67,30 @@ netrw's `b:netrw_curdir` and the text netrw already rendered
 (`netrw.parse_tree`) purely to figure out which listing line belongs to
 which open buffer, and layers file labels on top as **signs**, which
 sit in a fixed gutter and never touch netrw's real buffer text. Opening
-a file is left entirely to netrw itself via `b:netrw_browse_split = 4`
-(set on the sidebar buffer only), so netrw resolves its own paths --
-correctly, for nested tree entries and after directory changes, by
-construction -- and there's no custom `<CR>` mapping to get wrong. That
-also keeps netrw's own line-based bookkeeping (history, bookmarks,
-marks, `gx`, etc.) completely unaffected, in flat or tree listing style
-alike.
+a file is left entirely to netrw itself via `g:netrw_browse_split = 4`,
+so netrw resolves its own paths -- correctly, for nested tree entries
+and after directory changes, by construction -- and there's no custom
+`<CR>` mapping to get wrong. That also keeps netrw's own line-based
+bookkeeping (history, bookmarks, marks, `gx`, etc.) completely
+unaffected, in flat or tree listing style alike.
+
+`g:netrw_browse_split` has to be the *global* setting rather than a
+buffer-local override: netrw reads it into its own internal state
+during `:Explore`'s own init, which runs before `FileType netrw` fires
+-- by the time a buffer-local value could be set from that autocmd,
+netrw's already committed to whatever the global said. It's only set if
+you haven't configured your own value (same pattern as `tree_style`
+below).
+
+`g:netrw_browse_split = 4` opens files in Vim's own "alternate window"
+(`:help CTRL-W_p`) -- whatever window was current immediately before
+the one you're in now. That's the main window in the ordinary main
+&lt;-&gt; Explore flow, but if you focus the Terminals window and then
+jump straight into Explore, the alternate window would otherwise become
+Terminals. A `WinEnter` hook on the Explore window detects exactly that
+case and resets the alternate window back to the main window first,
+before you'd ever press `<CR>` -- it leaves any other legitimate
+alternate window (e.g. a third split you're using) untouched.
 
 The **Terminals window** is a separate, dedicated scratch buffer that
 `buffer_sidebar` fully owns, pinned to the bottom of the sidebar column
@@ -98,14 +114,11 @@ refresh of both windows' content.
   matches what's *currently visible*; a file inside a collapsed
   subdirectory won't be matched, and simply won't have a label -- there's
   no "Open Elsewhere" fallback section.
-- **`netrw_browse_split = 4` opens files in the "previously-focused"
-  window**, which is Vim's own alternate-window concept. In the very
-  common case (main window <-> Explore window) this is exactly the main
-  window. If you instead focus the Terminals window and then jump
-  straight into Explore without passing through the main window first,
-  the "previous window" netrw uses could technically be the Terminals
-  window. This is an edge case in normal usage and not specifically
-  guarded against, in the interest of keeping this thin.
+- **`netrw_browse_split = 4` is a global setting**, since (see above)
+  netrw won't respect a buffer-local override for it. If you have other
+  netrw windows open elsewhere in the same session, files opened from
+  those will also use "open in the alternate window" behaviour, unless
+  you've already set your own `g:netrw_browse_split`.
 - **`g<label>` mappings are global**, not scoped to any one window,
   since the point is a two-keystroke jump from wherever you're currently
   editing. They're fully torn down and reinstalled every relabel, so a
