@@ -24,21 +24,33 @@ local M = {}
 
 local mapped_labels = {}
 local main_win_getter -- fun(): winid|nil, injected by init.lua
+local sidebar_windows_getter -- fun(): {[winid]=true, ...}|nil, injected by init.lua
 
 function M.set_main_win_getter(fn)
   main_win_getter = fn
 end
 
+--- init.lua injects a getter for "the set of windows that belong to the
+-- sidebar" (Explore + Terminals), so the fallback below can exclude
+-- them explicitly rather than guessing from filetype -- filetype alone
+-- can't tell the Terminals window apart from a real editing window,
+-- since it isn't filetype "netrw" either.
+function M.set_sidebar_windows_getter(fn)
+  sidebar_windows_getter = fn
+end
+
 --- Resolve the window that "jump to this buffer" should land in: prefer
--- the remembered "main" window, else any currently non-netrw window.
--- Used by g<label> and the Terminals <CR>.
+-- the remembered "main" window, else any currently open window that
+-- isn't part of the sidebar itself. Used by g<label> and the Terminals
+-- <CR>.
 local function resolve_main_window()
   local target = main_win_getter and main_win_getter()
   if target and vim.api.nvim_win_is_valid(target) then
     return target
   end
+  local excluded = (sidebar_windows_getter and sidebar_windows_getter()) or {}
   for _, winid in ipairs(vim.api.nvim_list_wins()) do
-    if vim.bo[vim.api.nvim_win_get_buf(winid)].filetype ~= "netrw" then
+    if not excluded[winid] then
       return winid
     end
   end

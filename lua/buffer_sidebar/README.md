@@ -92,6 +92,18 @@ case and resets the alternate window back to the main window first,
 before you'd ever press `<CR>` -- it leaves any other legitimate
 alternate window (e.g. a third split you're using) untouched.
 
+Both sidebar windows set `winfixwidth`/`winfixheight`, so the column
+never expands to soak up space freed by some unrelated window closing
+elsewhere -- and the Explore buffer is explicitly unlisted
+(`buflisted = false`), since netrw's buffer is listed by default, and a
+listed buffer is fair game for Neovim to fall back to in some *other*
+window when that window's own buffer gets deleted (e.g. `:bd` on your
+file in the main window) and no other listed buffer exists. Left
+listed, that fallback could put netrw's own buffer into your main
+window. `close_sidebar` also opens a plain window first if the
+sidebar's own windows would otherwise be the last ones left, since Vim
+refuses to close the last window in existence.
+
 The **Terminals window** is a separate, dedicated scratch buffer that
 `buffer_sidebar` fully owns, pinned to the bottom of the sidebar column
 (`winfixheight`, sized as a fraction of the column at open time). Since

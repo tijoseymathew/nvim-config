@@ -140,6 +140,15 @@ local function on_netrw_filetype(bufnr)
   vim.b[bufnr].buffer_sidebar = true
   state.curdir = netrw_mod.curdir(bufnr) or state.curdir
 
+  -- Netrw's Explore buffer is `buflisted` by default. Left that way,
+  -- deleting the buffer in some OTHER window (e.g. `:bd` on your file in
+  -- the main window) can make Neovim fall back to the only other listed
+  -- buffer it can find -- which would be this one, putting netrw's own
+  -- buffer into your main window. Unlisting it keeps it out of that
+  -- fallback pool entirely, without changing anything about how netrw
+  -- itself behaves inside the sidebar.
+  vim.bo[bufnr].buflisted = false
+
   refresh_overlays()
 end
 
@@ -196,6 +205,9 @@ local function open_sidebar()
   -- 'signcolumn' setting (netrw or an ftplugin may otherwise turn it off).
   vim.wo[state.sidebar_win].signcolumn = "yes"
   vim.wo[state.sidebar_win].winfixheight = true
+  -- Pin the column's width too, so it can never expand to soak up space
+  -- freed by some unrelated window closing elsewhere in the editor.
+  vim.wo[state.sidebar_win].winfixwidth = true
 
   -- Pinned Terminals window, split off the bottom of the same column.
   local total_h = vim.api.nvim_win_get_height(state.sidebar_win)
@@ -205,6 +217,7 @@ local function open_sidebar()
   state.terminal_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(state.terminal_win, ensure_terminal_buf())
   vim.wo[state.terminal_win].winfixheight = true
+  vim.wo[state.terminal_win].winfixwidth = true
   vim.wo[state.terminal_win].signcolumn = "no"
   vim.wo[state.terminal_win].number = false
   vim.wo[state.terminal_win].relativenumber = false
@@ -220,10 +233,28 @@ local function close_sidebar()
   if state.sidebar_buf and vim.api.nvim_buf_is_valid(state.sidebar_buf) then
     state.curdir = netrw_mod.curdir(state.sidebar_buf) or state.curdir
   end
-  if state.terminal_win and vim.api.nvim_win_is_valid(state.terminal_win) then
-    vim.api.nvim_win_close(state.terminal_win, true)
+
+  -- Guard against "E444: cannot close last window": if the sidebar's
+  -- own windows are the only windows left (e.g. the main window closed
+  -- for some unrelated reason), open a plain window first so there's
+  -- always somewhere to land.
+  local sidebar_win_count = 0
+  if state.sidebar_win and vim.api.nvim_win_is_valid(state.sidebar_win) then
+    sidebar_win_count = sidebar_win_count + 1
   end
-  vim.api.nvim_win_close(state.sidebar_win, true)
+  if state.terminal_win and vim.api.nvim_win_is_valid(state.terminal_win) then
+    sidebar_win_count = sidebar_win_count + 1
+  end
+  if #vim.api.nvim_list_wins() <= sidebar_win_count then
+    vim.cmd("topleft new")
+  end
+
+  if state.terminal_win and vim.api.nvim_win_is_valid(state.terminal_win) then
+    pcall(vim.api.nvim_win_close, state.terminal_win, true)
+  end
+  if state.sidebar_win and vim.api.nvim_win_is_valid(state.sidebar_win) then
+    pcall(vim.api.nvim_win_close, state.sidebar_win, true)
+  end
   state.sidebar_win = nil
   state.sidebar_buf = nil
   state.terminal_win = nil
@@ -242,6 +273,13 @@ function M.setup(opts)
 
   navigation_mod.set_main_win_getter(function()
     return state.main_win
+  end)
+
+  navigation_mod.set_sidebar_windows_getter(function()
+    local set = {}
+    if state.sidebar_win then set[state.sidebar_win] = true end
+    if state.terminal_win then set[state.terminal_win] = true end
+    return set
   end)
 
   autocmds_mod.setup({
