@@ -15,6 +15,13 @@ local M = {}
 local ns = vim.api.nvim_create_namespace("buffer_sidebar")
 local SIGN_GROUP = "buffer_sidebar_labels"
 
+local function highlight_active(bufnr, row)
+  vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+    line_hl_group = "Visual",
+    priority = 200,
+  })
+end
+
 local defined_signs = {}
 local function define_sign(label)
   local name = "BufSidebar_" .. label
@@ -33,10 +40,12 @@ end
 -- init.lua) rather than relying on the user's global setting.
 -- @param bufnr    sidebar netrw buffer
 -- @param in_tree  list of { label, item = { bufnr, entry } }
-function M.render(bufnr, in_tree)
+-- @param active_buf  buffer currently shown outside the sidebar
+function M.render(bufnr, in_tree, active_buf)
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
   vim.fn.sign_unplace(SIGN_GROUP, { buffer = bufnr })
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   for _, labelled in ipairs(in_tree) do
@@ -47,6 +56,9 @@ function M.render(bufnr, in_tree)
         lnum = lnum,
         priority = 20,
       })
+      if labelled.item.bufnr == active_buf then
+        highlight_active(bufnr, lnum - 1)
+      end
     end
   end
 end
@@ -61,7 +73,8 @@ end
 -- navigation.install_terminal_cr).
 -- @param bufnr      the dedicated Terminals scratch buffer
 -- @param terminals  list of { label, item = { bufnr, display } }
-function M.render_terminals(bufnr, terminals)
+-- @param active_buf  buffer currently shown outside the sidebar
+function M.render_terminals(bufnr, terminals, active_buf)
   if not vim.api.nvim_buf_is_valid(bufnr) then return {} end
 
   local lines = { "Terminals", string.rep("─", 15) }
@@ -88,6 +101,9 @@ function M.render_terminals(bufnr, terminals)
   vim.api.nvim_buf_add_highlight(bufnr, ns, "Comment", 1, 0, -1)
   for lnum, len in pairs(label_lens) do
     vim.api.nvim_buf_add_highlight(bufnr, ns, "Function", lnum - 1, 0, len)
+    if line_map[lnum] == active_buf then
+      highlight_active(bufnr, lnum - 1)
+    end
   end
 
   return line_map

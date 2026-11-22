@@ -42,6 +42,9 @@ vim.keymap.set("n", "<leader>e", "<cmd>BufferSidebar<CR>")
   means you land on the existing buffer instead of a duplicate, for
   free. `<CR>` on a directory is untouched netrw behaviour.
 - In the Terminals window: `<CR>` on a line jumps to that terminal.
+- The active file or terminal has a full-row `Visual` highlight. It
+  follows buffer and window changes and stays on the last active buffer
+  while either sidebar window has focus.
 - From **anywhere**: `g<label>` (e.g. `ga`, `gs`) jumps directly to the
   file or terminal currently shown with that label. Labels are
   reassigned deterministically whenever the set of open buffers/
@@ -117,6 +120,8 @@ Refreshing reuses netrw's own lifecycle where possible: netrw sets
 refreshes. Buffer/terminal/cwd churn (`BufAdd`, `BufDelete`,
 `TermOpen`, `TermClose`, `DirChanged`, ...) triggers a lighter debounced
 refresh of both windows' content.
+`BufEnter` and `WinEnter` also refresh the active-row highlight, remembering
+the last buffer focused outside the sidebar.
 
 ## Known limitations
 

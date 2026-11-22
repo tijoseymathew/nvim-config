@@ -12,6 +12,7 @@ local group = vim.api.nvim_create_augroup("BufferSidebar", { clear = true })
 --- @param opts table with:
 --   on_netrw_filetype  fun(bufnr)  -- netrw (re)listed a directory
 --   on_state_changed   fun()       -- buffer/terminal/cwd set changed
+--   on_focus_changed   fun()       -- active buffer/window changed
 function M.setup(opts)
   vim.api.nvim_clear_autocmds({ group = group })
 
@@ -35,6 +36,17 @@ function M.setup(opts)
       opts.on_state_changed()
     end)
   end
+
+  vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+    group = group,
+    callback = function()
+      -- Capture focus immediately: a later event in the same tick may
+      -- move into the sidebar, where the previous active buffer is kept.
+      opts.on_focus_changed()
+      debounced()
+    end,
+    desc = "buffer_sidebar: active buffer/window changed",
+  })
 
   vim.api.nvim_create_autocmd({
     "BufAdd", "BufDelete", "BufWipeout", "BufFilePost",

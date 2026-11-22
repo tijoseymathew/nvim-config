@@ -46,6 +46,7 @@ local state = {
   terminal_win = nil,  -- pinned Terminals window
   terminal_buf = nil,  -- its dedicated scratch buffer (persists across hide/show)
   main_win = nil,
+  active_buf = nil,   -- last buffer focused outside the sidebar
   curdir = nil,
 }
 
@@ -85,6 +86,13 @@ local function guard_alternate_window()
   fixing_alternate = false
 end
 
+local function remember_active_buffer()
+  if fixing_alternate then return end
+  local win = vim.api.nvim_get_current_win()
+  if win == state.sidebar_win or win == state.terminal_win then return end
+  state.active_buf = vim.api.nvim_win_get_buf(win)
+end
+
 --- Recompute buffer classification, labels, and the two rendering
 -- targets (netrw's sign-based file labels, the Terminals buffer's
 -- content). Does NOT touch netrw's own listing.
@@ -119,10 +127,10 @@ local function refresh_overlays()
     nav_by_label[entry.label] = { bufnr = entry.item.v.bufnr }
   end
 
-  render_mod.render(state.sidebar_buf, in_tree_l)
+  render_mod.render(state.sidebar_buf, in_tree_l, state.active_buf)
 
   if state.terminal_buf and vim.api.nvim_buf_is_valid(state.terminal_buf) then
-    local line_map = render_mod.render_terminals(state.terminal_buf, terminals_l)
+    local line_map = render_mod.render_terminals(state.terminal_buf, terminals_l, state.active_buf)
     navigation_mod.set_terminal_line_map(state.terminal_buf, line_map)
   end
 
@@ -270,6 +278,7 @@ end
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
+  remember_active_buffer()
 
   navigation_mod.set_main_win_getter(function()
     return state.main_win
@@ -285,6 +294,7 @@ function M.setup(opts)
   autocmds_mod.setup({
     on_netrw_filetype = on_netrw_filetype,
     on_state_changed = refresh_overlays,
+    on_focus_changed = remember_active_buffer,
   })
 
   vim.api.nvim_create_autocmd("WinEnter", {
